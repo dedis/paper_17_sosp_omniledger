@@ -4,8 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain/blkparser"
 	"gopkg.in/dedis/onet.v1/log"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain/blkparser"
 )
 
 type TransactionList struct {

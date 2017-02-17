@@ -3,8 +3,8 @@ package byzcoin
 import (
 	"errors"
 
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
 	"gopkg.in/dedis/onet.v1/log"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain"
 )
 
 var magicNum = [4]byte{0xF9, 0xBE, 0xB4, 0xD9}

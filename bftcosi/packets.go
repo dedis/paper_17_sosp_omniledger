@@ -6,8 +6,8 @@ import (
 
 	"gopkg.in/dedis/onet.v1/network"
 
-	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/crypto.v0/abstract"
+	"gopkg.in/dedis/onet.v1"
 )
 
 // RoundType is a type to know if we are in the "prepare" round or the "commit"

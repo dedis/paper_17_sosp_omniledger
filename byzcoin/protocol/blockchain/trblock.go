@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"net"
 
-	"gopkg.in/dedis/onet.v1/crypto"
+	"github.com/dedis/paper_17_sosp_omniledger/crypto"
 	"gopkg.in/dedis/onet.v1/log"
 )
 

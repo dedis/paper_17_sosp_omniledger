@@ -5,10 +5,11 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/service"
+	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
 	"gopkg.in/dedis/onet.v1/simul/monitor"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain"
-	"gopkg.in/dedis/onet.v1"
 )
 
 /*
@@ -61,9 +62,9 @@ func (e *simulation) Setup(dir string, hosts []string) (
 // rounds
 func (e *simulation) Run(config *onet.SimulationConfig) error {
 	//size := config.Tree.Size()
-	service, ok := config.GetService(ServiceName).(*Service)
+	service, ok := config.GetService(byzcoin_ng.ServiceName).(*byzcoin_ng.Service)
 	if service == nil || !ok {
-		log.Fatal("Didn't find service", ServiceName)
+		log.Fatal("Didn't find service", byzcoin_ng.ServiceName)
 	}
 	err := service.StartSimul(blockchain.GetBlockDir(), e.Blocksize, config.Roster)
 	if err != nil {
@@ -83,7 +84,7 @@ func (e *simulation) Run(config *onet.SimulationConfig) error {
 					e.lock.Unlock()
 					lat := monitor.NewTimeMeasure("lat")
 					log.Lvl1("Starting round", round, "at thread", j)
-					_, err := service.startEpoch(round, e.Blocksize)
+					_, err := service.StartEpoch(round, e.Blocksize)
 					if err != nil {
 						log.Error("problem after epoch")
 					}

@@ -5,13 +5,13 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/toml"
+	"github.com/dedis/archives/protocols/manage"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/cosi"
+	"gopkg.in/dedis/crypto.v0/abstract"
+	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
 	"gopkg.in/dedis/onet.v1/simul/monitor"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain"
-	"github.com/dedis/cothority/protocols/byzcoin/cosi"
-	"gopkg.in/dedis/cothority.v1/manage"
-	"gopkg.in/dedis/onet.v1"
-	"gopkg.in/dedis/crypto.v0/abstract"
 )
 
 func init() {

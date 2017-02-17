@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dedis/paper_17_sosp_omniledger/bftcosi"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain/blkparser"
+	"gopkg.in/dedis/cothority.v1/messaging"
+	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
 	"gopkg.in/dedis/onet.v1/network"
-	"github.com/dedis/cothority/protocols/bftcosi"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain/blkparser"
-	"gopkg.in/dedis/cothority.v1/manage"
-	"gopkg.in/dedis/onet.v1"
 )
 
 // ServiceName is the name to refer to the Template service from another
@@ -48,7 +48,7 @@ type Service struct {
 	HWMutex   sync.Mutex
 	Vempty    bool
 
-	Propagate manage.PropagationFunc
+	Propagate messaging.PropagationFunc
 	//TODO push this inside the blocks
 	Roster *onet.Roster
 
@@ -87,7 +87,7 @@ func (s *Service) StartSimul(blocksPath string, nTxs int, Roster *onet.Roster) e
 	return nil
 }
 
-func (s *Service) startEpoch(priority int, size int) (*bftcosi.MicroBlock, error) {
+func (s *Service) StartEpoch(priority int, size int) (*bftcosi.MicroBlock, error) {
 	//number of rounds... should be viariable
 	block, err := GetBlock(size, *s.transaction, s.lastBlock, s.lastKeyBlock, priority)
 	if err != nil {
@@ -199,54 +199,6 @@ func (s *Service) NewProtocol(tn *onet.TreeNodeInstance, conf *onet.GenericConfi
 	}
 	return pi, err
 
-}
-
-// newTemplate receives the context and a path where it can write its
-// configuration, if desired. As we don't know when the service will exit,
-// we need to save the clconfiguration on our own from time to time.
-func newByzcoinNGService(c *onet.Context, path string) onet.Service {
-	s := &Service{
-		ServiceProcessor: onet.NewServiceProcessor(c),
-		path:             path,
-		lastBlock:        "0",
-		lastKeyBlock:     "0",
-		transaction:      &[]blkparser.Tx{},
-		Vempty:           true,
-		PQueue:           &bftcosi.PriorityQueue{},
-		PQueuever:        &bftcosi.PriorityQueue{},
-		SerilizeChan:     make(chan bftcosi.Item),
-	}
-	s.Propagate, _ = manage.NewPropagationFunc(c, "PropagateBZBlocks", s.PropagateBZBlock)
-	heap.Init(s.PQueue)
-	heap.Init(s.PQueuever)
-	go func() {
-		empty := true
-		for {
-			chanel := <-s.SerilizeChan
-			if chanel.Priority != -1 {
-				s.QMutex.Lock()
-				if empty {
-					empty = false
-					chanel.NotifyChan <- true
-					s.QMutex.Unlock()
-				} else {
-					heap.Push(s.PQueue, &chanel)
-					s.QMutex.Unlock()
-				}
-			} else {
-				s.QMutex.Lock()
-				if s.PQueue.Len() != 0 {
-					item := s.PQueue.Pop().(*bftcosi.Item)
-					item.NotifyChan <- true
-				} else {
-					empty = true
-				}
-				s.QMutex.Unlock()
-
-			}
-		}
-	}()
-	return s
 }
 
 // GetBlock returns the next block available from the transaction pool.
@@ -377,4 +329,51 @@ func (s *Service) PropagateBZBlock(msg network.Message) {
 	s.lastBlock = sb.HeaderHash
 	//TODO: Handle Key blocks
 	log.Lvlf3("Stored skip block %+v in %x", *sb, s.Context.ServerIdentity().ID[0:8])
+}
+
+// newTemplate receives the context and a path where it can write its
+// configuration, if desired. As we don't know when the service will exit,
+// we need to save the clconfiguration on our own from time to time.
+func newByzcoinNGService(c *onet.Context) onet.Service {
+	s := &Service{
+		ServiceProcessor: onet.NewServiceProcessor(c),
+		lastBlock:        "0",
+		lastKeyBlock:     "0",
+		transaction:      &[]blkparser.Tx{},
+		Vempty:           true,
+		PQueue:           &bftcosi.PriorityQueue{},
+		PQueuever:        &bftcosi.PriorityQueue{},
+		SerilizeChan:     make(chan bftcosi.Item),
+	}
+	s.Propagate, _ = messaging.NewPropagationFunc(c, "PropagateBZBlocks", s.PropagateBZBlock)
+	heap.Init(s.PQueue)
+	heap.Init(s.PQueuever)
+	go func() {
+		empty := true
+		for {
+			chanel := <-s.SerilizeChan
+			if chanel.Priority != -1 {
+				s.QMutex.Lock()
+				if empty {
+					empty = false
+					chanel.NotifyChan <- true
+					s.QMutex.Unlock()
+				} else {
+					heap.Push(s.PQueue, &chanel)
+					s.QMutex.Unlock()
+				}
+			} else {
+				s.QMutex.Lock()
+				if s.PQueue.Len() != 0 {
+					item := s.PQueue.Pop().(*bftcosi.Item)
+					item.NotifyChan <- true
+				} else {
+					empty = true
+				}
+				s.QMutex.Unlock()
+
+			}
+		}
+	}()
+	return s
 }

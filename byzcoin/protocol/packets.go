@@ -1,8 +1,8 @@
 package byzcoin
 
 import (
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain"
-	"github.com/dedis/cothority/protocols/byzcoin/cosi"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/cosi"
 	"gopkg.in/dedis/onet.v1"
 )
 

@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"gopkg.in/dedis/onet.v1/crypto"
-	"gopkg.in/dedis/onet.v1/log"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain/blkparser"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain/blkparser"
+	"github.com/dedis/paper_17_sosp_omniledger/crypto"
 	"gopkg.in/dedis/crypto.v0/abstract"
 	"gopkg.in/dedis/crypto.v0/suites"
+	"gopkg.in/dedis/onet.v1/log"
 )
 
 type MessageType int

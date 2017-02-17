@@ -7,10 +7,10 @@ This holds the messages used to communicate with the service over the network.
 import (
 	"bytes"
 
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
 	"gopkg.in/dedis/onet.v1/network"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain"
-	"gopkg.in/dedis/onet.v1"
 )
 
 // We need to register all messages so the network knows how to handle them.

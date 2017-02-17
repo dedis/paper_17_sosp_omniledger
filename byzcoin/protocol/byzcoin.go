@@ -10,13 +10,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain/blkparser"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/cosi"
+	"gopkg.in/dedis/crypto.v0/abstract"
+	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
 	"gopkg.in/dedis/onet.v1/simul/monitor"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain/blkparser"
-	"github.com/dedis/cothority/protocols/byzcoin/cosi"
-	"gopkg.in/dedis/onet.v1"
-	"gopkg.in/dedis/crypto.v0/abstract"
 )
 
 // ByzCoin is the main struct for running the protocol

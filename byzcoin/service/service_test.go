@@ -3,8 +3,8 @@ package byzcoin_ng
 import (
 	"testing"
 
-	"gopkg.in/dedis/onet.v1/log"
 	"gopkg.in/dedis/onet.v1"
+	"gopkg.in/dedis/onet.v1/log"
 )
 
 func TestMain(m *testing.M) {

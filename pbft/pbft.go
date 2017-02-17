@@ -7,10 +7,10 @@ import (
 	"math"
 	"time"
 
-	"gopkg.in/dedis/onet.v1/log"
-	"github.com/dedis/cothority/protocols/byzcoin/blockchain"
-	"gopkg.in/dedis/onet.v1"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
 	"gopkg.in/dedis/crypto.v0/abstract"
+	"gopkg.in/dedis/onet.v1"
+	"gopkg.in/dedis/onet.v1/log"
 )
 
 const (
