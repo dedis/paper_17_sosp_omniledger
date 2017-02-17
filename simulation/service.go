@@ -62,6 +62,7 @@ func (e *simulation) Setup(dir string, hosts []string) (
 // rounds
 func (e *simulation) Run(config *onet.SimulationConfig) error {
 	//size := config.Tree.Size()
+	log.Print(config.Tree.Root.Children)
 	service, ok := config.GetService(byzcoin_ng.ServiceName).(*byzcoin_ng.Service)
 	if service == nil || !ok {
 		log.Fatal("Didn't find service", byzcoin_ng.ServiceName)
