@@ -7,4 +7,4 @@ RunWait = 3000
 CloseWait = 3000
 
 Hosts, Blocksize, Threads, Rounds 
-2, 100, 1, 4
+20, 1000, 1, 4
