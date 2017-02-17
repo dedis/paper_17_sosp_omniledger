@@ -1,0 +1,10 @@
+Servers = 11
+Simulation = "ServiceBNG"
+#Simulation = "ByzCoin"
+NumClientTxs = 350000
+BF = 3
+RunWait = 3000
+CloseWait = 3000
+
+Hosts, Blocksize, Threads, Rounds 
+2, 100, 1, 4
