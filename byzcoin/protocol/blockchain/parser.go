@@ -14,6 +14,10 @@ import (
 
 	"encoding/hex"
 
+	"io/ioutil"
+
+	"bytes"
+
 	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain/blkparser"
 	"gopkg.in/dedis/onet.v1/log"
 )
@@ -130,6 +134,21 @@ func DownloadBlock(dir string) (string, error) {
 func EnsureBlockIsAvailable(dir string) error {
 	tmpdir := "/tmp/byzcoin"
 	block := GetBlockName(tmpdir)
+	if block != "" {
+		log.Lvl2("Checking sha256 of block")
+		blkHash, _ := hex.DecodeString("3fb2b64a3aaadbc67268113ba4791cde76ea18205fff3862fc3ac0de47a7cdbb")
+		buf, err := ioutil.ReadFile(block)
+		if err != nil {
+			block = ""
+		}
+		hash := sha256.New()
+		hash.Write(buf)
+		blkHashFile := hash.Sum(nil)
+		if bytes.Compare(blkHash, blkHashFile) != 0 {
+			log.Errorf("Couldn't verify hash %x - %x", blkHash, blkHashFile)
+			block = ""
+		}
+	}
 	if block == "" {
 		var err error
 		block, err = DownloadBlock(tmpdir)
