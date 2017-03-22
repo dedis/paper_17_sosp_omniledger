@@ -41,6 +41,7 @@ type Service struct {
 	*onet.ServiceProcessor
 	path string
 	//Mutex that emulates the hardware bottleneck
+	TRMutex   sync.Mutex
 	QMutex    sync.Mutex
 	QMutexver sync.RWMutex
 	PQueue    *bftcosi.PriorityQueue
@@ -50,14 +51,14 @@ type Service struct {
 
 	Propagate messaging.PropagationFunc
 	//TODO push this inside the blocks
-	Roster *onet.Roster
-
+	Roster       *onet.Roster
+	done         chan bool
 	SerilizeChan chan bftcosi.Item
-
+	block        *bftcosi.MicroBlock
 	lastBlock    string
 	lastKeyBlock string
 
-	transaction *[]blkparser.Tx
+	Transaction *[]blkparser.Tx
 }
 
 var magicNum = [4]byte{0xF9, 0xBE, 0xB4, 0xD9}
@@ -82,14 +83,15 @@ func (s *Service) StartSimul(blocksPath string, nTxs int, Roster *onet.Roster) e
 		log.Errorf("Read only %v but caller wanted %v", len(transactions), nTxs)
 	}
 
-	s.transaction = &transactions
+	s.Transaction = &transactions
 
 	return nil
 }
 
 func (s *Service) StartEpoch(priority int, size int) (*bftcosi.MicroBlock, error) {
 	//number of rounds... should be viariable
-	block, err := GetBlock(size, *s.transaction, s.lastBlock, s.lastKeyBlock, priority)
+	s.TRMutex.Lock()
+	block, err := GetBlock(size, *s.Transaction, s.lastBlock, s.lastKeyBlock, priority)
 	if err != nil {
 		log.Lvl1("cannot get block")
 		return nil, err
@@ -106,8 +108,13 @@ func (s *Service) StartEpoch(priority int, size int) (*bftcosi.MicroBlock, error
 		log.Lvl1("cannot verify block")
 		return nil, err
 	}
+	s.block = block
+	close(s.done)
+	s.done = make(chan bool)
+	s.TRMutex.Unlock()
 
 	return block, nil
+
 }
 
 // signNewBlock should start a BFT-signature on the newest block
@@ -146,7 +153,7 @@ func (s *Service) startBFTSignature(block *bftcosi.MicroBlock) error {
 	el := block.Roster
 
 	// Start the protocol
-	tree := el.GenerateNaryTreeWithRoot(2, s.ServerIdentity())
+	tree := el.GenerateNaryTreeWithRoot(4, s.ServerIdentity())
 
 	node, err := s.CreateProtocol(BNGBFT, tree)
 	if err != nil {
@@ -206,7 +213,6 @@ func GetBlock(size int, transactions []blkparser.Tx, lastBlock string, lastKeyBl
 	if len(transactions) < 1 {
 		return nil, errors.New("no transaction available")
 	}
-
 	trlist := blockchain.NewTransactionList(transactions, size)
 	header := blockchain.NewHeader(trlist, lastBlock, lastKeyBlock)
 	trblock := blockchain.NewTrBlock(trlist, header)
@@ -331,26 +337,43 @@ func (s *Service) PropagateBZBlock(msg network.Message) {
 	log.Lvlf3("Stored skip block %+v in %x", *sb, s.Context.ServerIdentity().ID[0:8])
 }
 
+func (s *Service) Request(rq *Request) (network.Message, onet.ClientError) {
+	tr := rq.Transaction
+	s.TRMutex.Lock()
+	*s.Transaction = append(*s.Transaction, tr)
+	s.TRMutex.Unlock()
+	log.Lvl1("Got transaction", s.ServiceProcessor.ServerIdentity())
+	<-s.done
+	block := s.block
+	block.TransactionList = blockchain.TransactionList{}
+
+	return &Reply{*block}, nil
+}
+
 // newTemplate receives the context and a path where it can write its
 // configuration, if desired. As we don't know when the service will exit,
 // we need to save the clconfiguration on our own from time to time.
 func newByzcoinNGService(c *onet.Context) onet.Service {
 	s := &Service{
 		ServiceProcessor: onet.NewServiceProcessor(c),
+		block:            &bftcosi.MicroBlock{},
 		lastBlock:        "0",
 		lastKeyBlock:     "0",
-		transaction:      &[]blkparser.Tx{},
+		Transaction:      &[]blkparser.Tx{},
 		Vempty:           true,
 		PQueue:           &bftcosi.PriorityQueue{},
 		PQueuever:        &bftcosi.PriorityQueue{},
 		SerilizeChan:     make(chan bftcosi.Item),
+		done:             make(chan bool),
 	}
+	s.RegisterHandler(s.Request)
 	s.Propagate, _ = messaging.NewPropagationFunc(c, "PropagateBZBlocks", s.PropagateBZBlock)
 	heap.Init(s.PQueue)
 	heap.Init(s.PQueuever)
 	go func() {
 		empty := true
 		for {
+
 			chanel := <-s.SerilizeChan
 			if chanel.Priority != -1 {
 				s.QMutex.Lock()
@@ -376,4 +399,12 @@ func newByzcoinNGService(c *onet.Context) onet.Service {
 		}
 	}()
 	return s
+}
+
+type Request struct {
+	Transaction blkparser.Tx
+}
+
+type Reply struct {
+	Block bftcosi.MicroBlock
 }
