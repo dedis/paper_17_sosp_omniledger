@@ -41,6 +41,7 @@ type Service struct {
 	*onet.ServiceProcessor
 	path string
 	//Mutex that emulates the hardware bottleneck
+	Barrier   sync.Mutex
 	TRMutex   sync.Mutex
 	QMutex    sync.Mutex
 	QMutexver sync.RWMutex
@@ -51,12 +52,14 @@ type Service struct {
 
 	Propagate messaging.PropagationFunc
 	//TODO push this inside the blocks
-	Roster       *onet.Roster
-	done         chan bool
-	SerilizeChan chan bftcosi.Item
-	block        *bftcosi.MicroBlock
-	lastBlock    string
-	lastKeyBlock string
+	Roster           *onet.Roster
+	done             chan bool
+	SerilizeChan     chan bftcosi.Item
+	block            *bftcosi.MicroBlock
+	lastBlock        string
+	lastKeyBlock     string
+	currentpriority  int
+	expectedpriority int
 
 	Transaction *[]blkparser.Tx
 }
@@ -90,12 +93,16 @@ func (s *Service) StartSimul(blocksPath string, nTxs int, Roster *onet.Roster) e
 
 func (s *Service) StartEpoch(priority int, size int) (*bftcosi.MicroBlock, error) {
 	//number of rounds... should be viariable
+	s.Barrier.Lock()
+	s.Barrier.Unlock()
 	s.TRMutex.Lock()
 	block, err := GetBlock(size, *s.Transaction, s.lastBlock, s.lastKeyBlock, priority)
 	if err != nil {
 		log.Lvl1("cannot get block")
 		return nil, err
 	}
+	s.currentpriority = priority
+	s.TRMutex.Unlock()
 
 	block.Roster = s.Roster
 	s.signNewBlock(block)
@@ -108,11 +115,11 @@ func (s *Service) StartEpoch(priority int, size int) (*bftcosi.MicroBlock, error
 		log.Lvl1("cannot verify block")
 		return nil, err
 	}
-	s.block = block
-	close(s.done)
-	s.done = make(chan bool)
-	s.TRMutex.Unlock()
-
+	if s.expectedpriority == block.Priority || s.expectedpriority == -1 {
+		s.block = block
+		close(s.done)
+		s.done = make(chan bool)
+	}
 	return block, nil
 
 }
@@ -339,15 +346,21 @@ func (s *Service) PropagateBZBlock(msg network.Message) {
 
 func (s *Service) Request(rq *Request) (network.Message, onet.ClientError) {
 	tr := rq.Transaction
+	log.Lvl1("Got transaction", s.ServiceProcessor.ServerIdentity())
+	s.Barrier.Lock()
 	s.TRMutex.Lock()
 	*s.Transaction = append(*s.Transaction, tr)
+	s.expectedpriority = s.currentpriority - 1
 	s.TRMutex.Unlock()
-	log.Lvl1("Got transaction", s.ServiceProcessor.ServerIdentity())
+	s.Barrier.Unlock()
+	log.Lvl1("Added transaction", s.ServiceProcessor.ServerIdentity())
 	<-s.done
 	block := s.block
 	block.TransactionList = blockchain.TransactionList{}
 
-	return &Reply{*block}, nil
+	return &Reply{Header: block.Header,
+		Roster: block.Roster,
+		Sig:    block.BlockSig}, nil
 }
 
 // newTemplate receives the context and a path where it can write its
@@ -359,6 +372,8 @@ func newByzcoinNGService(c *onet.Context) onet.Service {
 		block:            &bftcosi.MicroBlock{},
 		lastBlock:        "0",
 		lastKeyBlock:     "0",
+		currentpriority:  0,
+		expectedpriority: 0,
 		Transaction:      &[]blkparser.Tx{},
 		Vempty:           true,
 		PQueue:           &bftcosi.PriorityQueue{},
@@ -406,5 +421,7 @@ type Request struct {
 }
 
 type Reply struct {
-	Block bftcosi.MicroBlock
+	Header *blockchain.Header
+	Roster *onet.Roster
+	Sig    *bftcosi.BFTSignature
 }

@@ -69,8 +69,10 @@ func (s *simulation) Node(sc *onet.SimulationConfig) error {
 	s.Shard_length = (len(sc.Roster.List) - 1) / s.Shards
 	if i%s.Shard_length == 1 { //leader of shard
 		if i+s.Shard_length <= len(sc.Roster.List) {
-
-			go s.run_service(sc, i)
+			var roster *onet.Roster
+			roster = onet.NewRoster(sc.Roster.List[i : i+s.Shard_length-1])
+			log.Lvl1("leader is:", i, "last is:", i+s.Shard_length-1)
+			go s.run_service(sc, roster, i)
 		}
 	}
 	return nil
@@ -79,9 +81,8 @@ func (s *simulation) Node(sc *onet.SimulationConfig) error {
 // Run is used on the destination machines and runs a number of
 // rounds
 func (e *simulation) Run(config *onet.SimulationConfig) error {
-
 	parser, err := blockchain.NewParser(blockchain.GetBlockDir(), magicNum)
-	transactions, err := parser.Parse(0, 1)
+	transactions, err := parser.Parse(0, 50)
 	if len(transactions) == 0 {
 		return errors.New("Couldn't read any transactions.")
 	}
@@ -91,50 +92,53 @@ func (e *simulation) Run(config *onet.SimulationConfig) error {
 			blockchain.GetBlockDir(), "Either run a bitcoin node (recommended) or using a torrent.")
 		return err
 	}
-	tr := transactions[0]
-	time.Sleep(6 * time.Second)
-	log.Lvl1("client parsed transaction", tr)
-
-	var wg sync.WaitGroup
-
-	for i, node := range config.Roster.List {
-		if i%e.Shard_length == 1 {
-			if i+e.Shard_length <= len(config.Roster.List) {
-
-				log.Lvl1("Client sending to node", i)
-				wg.Add(1)
-				go func(node *network.ServerIdentity) error {
-					ret := &byzcoin_ng.Reply{}
-					req := &byzcoin_ng.Request{tr}
-					cerr := byzcoin_ng.NewClient().SendProtobuf(node, req, ret)
-					log.ErrFatal(cerr)
-					block := ret.Block
-					err = block.BlockSig.Verify(network.Suite, block.Roster.Publics())
-					if err != nil {
-						log.Lvl1("cannot verify block")
-						return err
-					} else {
-						log.Lvl1("got answer from", node)
-					}
-					wg.Done()
-					return nil
-				}(node)
-			}
+	time.Sleep(30 * time.Second)
+	var cl *monitor.TimeMeasure
+	for j := 0; j < 10; j++ {
+		tr := transactions[j]
+		log.Lvl1("client parsed transaction", tr)
+		if j > 0 {
+			cl = monitor.NewTimeMeasure("client")
 		}
+		var wg sync.WaitGroup
 
+		for i, node := range config.Roster.List {
+			if i%e.Shard_length == 1 {
+				if i+e.Shard_length <= len(config.Roster.List) {
+
+					log.Lvl1("Client sending to node", i)
+					wg.Add(1)
+					go func(node *network.ServerIdentity) error {
+						ret := &byzcoin_ng.Reply{}
+						req := &byzcoin_ng.Request{tr}
+						cerr := byzcoin_ng.NewClient().SendProtobuf(node, req, ret)
+						log.ErrFatal(cerr)
+						err = ret.Sig.Verify(network.Suite, ret.Roster.Publics())
+						if err != nil {
+							log.Lvl1("cannot verify block")
+							return err
+						} else {
+							log.Lvl1("got answer from", node)
+						}
+						wg.Done()
+						return nil
+					}(node)
+				}
+			}
+
+		}
+		wg.Wait()
+		if j > 0 {
+			cl.Record()
+		}
 	}
-	wg.Wait()
 	log.Lvl1("client is done")
 
 	return nil
 }
 
-func (s *simulation) run_service(sc *onet.SimulationConfig, l int) {
-
-	var roster *onet.Roster
-	roster = onet.NewRoster(sc.Roster.List[l : l+s.Shard_length-1])
-	log.Lvl1("leader is:", l, "last is:", l+s.Shard_length-1)
-
+func (s *simulation) run_service(sc *onet.SimulationConfig, roster *onet.Roster, l int) {
+	time.Sleep(90 * time.Second)
 	service, ok := sc.GetService(byzcoin_ng.ServiceName).(*byzcoin_ng.Service)
 	if service == nil || !ok {
 		log.Fatal("Didn't find service", byzcoin_ng.ServiceName)
@@ -144,9 +148,8 @@ func (s *simulation) run_service(sc *onet.SimulationConfig, l int) {
 		log.Error(err)
 	}
 	log.Lvl1("Size is:", s.Blocksize, "rounds:", s.Rounds)
-
 	var wg sync.WaitGroup
-	round1 := monitor.NewTimeMeasure("round")
+	//round1 := monitor.NewTimeMeasure("round")
 	for i := 0; i < s.Threads; i++ {
 		wg.Add(1)
 		go func(j int) {
@@ -156,13 +159,13 @@ func (s *simulation) run_service(sc *onet.SimulationConfig, l int) {
 					s.Rounds--
 					round := s.Rounds
 					s.lock.Unlock()
-					lat := monitor.NewTimeMeasure("lat")
-					log.Lvl1("Starting round", round, "at thread", j, "with leader", l)
+					//lat := monitor.NewTimeMeasure("lat")
+					log.Lvl1("Starting round", round, "at thread", j, "with leader", l, "and last node", l+s.Shard_length-1)
 					_, err := service.StartEpoch(round, s.Blocksize)
 					if err != nil {
-						log.Error("problem after epoch")
+						log.Lvl1("problem after epoch", err)
 					}
-					lat.Record()
+					//lat.Record()
 				} else {
 					s.lock.Unlock()
 					break
@@ -176,7 +179,7 @@ func (s *simulation) run_service(sc *onet.SimulationConfig, l int) {
 		//service.startPropagation(block)
 	}
 	wg.Wait()
-	round1.Record()
+	//round1.Record()
 
 	log.Lvl2("done with measures")
 
