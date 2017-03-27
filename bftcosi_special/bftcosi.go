@@ -1,4 +1,4 @@
-package bftcosi
+package bftcosi_special
 
 /*
 BFTCoSi is a byzantine-fault-tolerant protocol to sign a message given a
@@ -17,6 +17,7 @@ import (
 	"gopkg.in/dedis/crypto.v0/cosi"
 	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
+	"gopkg.in/dedis/onet.v1/network"
 )
 
 // VerificationFunction can be passes to each protocol node. It will be called
@@ -83,6 +84,8 @@ type ProtocolBFTCoSi struct {
 	closing bool
 	// mutex for closing down properly
 	closingMutex sync.Mutex
+
+	ServiceChannel chan Item
 }
 
 // collectStructs holds the variables that are used during the protocol to hold
@@ -147,7 +150,7 @@ func NewBFTCoSiProtocol(n *onet.TreeNodeInstance, verify VerificationFunction) (
 // "commit" round will wait till the end of the "prepare" round during its
 // challenge phase.
 func (bft *ProtocolBFTCoSi) Start() error {
-	log.Lvl3("here we are audit")
+	log.Lvl3("here we are")
 	if err := bft.startAnnouncement(RoundPrepare); err != nil {
 		return err
 	}
@@ -338,11 +341,30 @@ func (bft *ProtocolBFTCoSi) handleChallengePrepare(msg challengePrepareChan) err
 		bft.prepare.Challenge(ch.Challenge)
 	}
 
+	//return control to service who checks everone that called the function and puts them
+	//in a PQ. If the protocol is in line to send then it returns control. In the end
+	//the protocol notifies through a channel that it is done.
+	_, sbN, err := network.Unmarshal(bft.Data)
+	if err != nil {
+		log.Error("Couldn't unmarshal Block", bft.Data)
+		return err
+	}
+	block := sbN.(*MicroBlock)
+
+	chanel := &Item{
+		Priority:   block.Priority,
+		NotifyChan: make(chan bool),
+	}
+	bft.ServiceChannel <- *chanel
+	<-chanel.NotifyChan
 	go func() {
 		bft.verifyChan <- bft.VerificationFunction(bft.Msg, bft.Data)
 	}()
 	// go to response if leaf
-	err := bft.SendToChildrenInParallel(&ch)
+	err = bft.SendToChildrenInParallel(&ch)
+	chanel.Priority = -1
+	//notify service that you are done by sending the chanel with id -1
+	bft.ServiceChannel <- *chanel
 	if bft.IsLeaf() {
 		return bft.startResponse(RoundPrepare)
 	}

@@ -34,6 +34,8 @@ type simulation struct {
 	Threads      int
 	Shards       int
 	Shard_length int
+	Auditors     int
+	audit_roster *onet.Roster
 }
 
 // NewSimulation r the new simulation, where all fields are
@@ -48,7 +50,7 @@ func NewSimulation(config string) (onet.Simulation, error) {
 }
 
 // Setup creates the tree used for that simulation
-func (e *simulation) Setup(dir string, hosts []string) (
+func (s *simulation) Setup(dir string, hosts []string) (
 	*onet.SimulationConfig, error) {
 	err := blockchain.EnsureBlockIsAvailable(dir)
 	if err != nil {
@@ -56,8 +58,8 @@ func (e *simulation) Setup(dir string, hosts []string) (
 	}
 
 	sc := &onet.SimulationConfig{}
-	e.CreateRoster(sc, hosts, 2000)
-	err = e.CreateTree(sc) //useless?
+	s.CreateRoster(sc, hosts, 2000)
+	err = s.CreateTree(sc) //useless?
 	if err != nil {
 		return nil, err
 	}
@@ -66,21 +68,36 @@ func (e *simulation) Setup(dir string, hosts []string) (
 
 func (s *simulation) Node(sc *onet.SimulationConfig) error {
 	i, _ := sc.Roster.Search(sc.Server.ServerIdentity.ID)
-	s.Shard_length = (len(sc.Roster.List) - 1) / s.Shards
-	if i%s.Shard_length == 1 { //leader of shard
-		if i+s.Shard_length <= len(sc.Roster.List) {
-			var roster *onet.Roster
-			roster = onet.NewRoster(sc.Roster.List[i : i+s.Shard_length-1])
-			log.Lvl1("leader is:", i, "last is:", i+s.Shard_length-1)
+	if s.Auditors > 0 { //leader of auditors is 0
+		s.audit_roster = onet.NewRoster(sc.Roster.List[0:s.Auditors])
+		s.Shard_length = (len(sc.Roster.List) - s.Auditors) / s.Shards
+		//Create Shards
+		log.Lvl1("i", i, "shard lenth", s.Shard_length, "full", len(sc.Roster.List))
+		if i >= s.Auditors && (i-s.Auditors)%s.Shard_length == 0 && i+s.Shard_length <= len(sc.Roster.List) {
+			roster := onet.NewRoster(sc.Roster.List[i : i+s.Shard_length])
+			log.Lvl1("leader is:", i, "last is:", i+s.Shard_length)
+			go s.run_service(sc, roster, i)
+
+		}
+	} else {
+		s.Shard_length = (len(sc.Roster.List) - 1) / s.Shards
+		if i%s.Shard_length == 1 && i+s.Shard_length <= len(sc.Roster.List) {
+			roster := onet.NewRoster(sc.Roster.List[i : i+s.Shard_length])
+			log.Lvl1("leader is:", i, "last is:", i+s.Shard_length)
 			go s.run_service(sc, roster, i)
 		}
+
 	}
 	return nil
 }
 
 // Run is used on the destination machines and runs a number of
 // rounds
-func (e *simulation) Run(config *onet.SimulationConfig) error {
+func (s *simulation) Run(config *onet.SimulationConfig) error {
+	service, ok := config.GetService(byzcoin_ng.ServiceName).(*byzcoin_ng.Service)
+	if service == nil || !ok {
+		log.Fatal("Didn't find service", byzcoin_ng.ServiceName)
+	}
 	parser, err := blockchain.NewParser(blockchain.GetBlockDir(), magicNum)
 	transactions, err := parser.Parse(0, 50)
 	if len(transactions) == 0 {
@@ -92,7 +109,7 @@ func (e *simulation) Run(config *onet.SimulationConfig) error {
 			blockchain.GetBlockDir(), "Either run a bitcoin node (recommended) or using a torrent.")
 		return err
 	}
-	time.Sleep(30 * time.Second)
+	//time.Sleep(30 * time.Second)
 	var cl *monitor.TimeMeasure
 	for j := 0; j < 10; j++ {
 		tr := transactions[j]
@@ -101,33 +118,64 @@ func (e *simulation) Run(config *onet.SimulationConfig) error {
 			cl = monitor.NewTimeMeasure("client")
 		}
 		var wg sync.WaitGroup
-
+		var audit_slice = make([]byzcoin_ng.Reply, (len(config.Roster.List)-s.Auditors)/s.Shard_length)
+		//var audit_slice [(len(config.Roster.List) - s.Auditors) / s.Shard_length]byzcoin_ng.Reply
+		log.Lvl3("slice has", (len(config.Roster.List)-s.Auditors)/s.Shard_length, s.Auditors)
 		for i, node := range config.Roster.List {
-			if i%e.Shard_length == 1 {
-				if i+e.Shard_length <= len(config.Roster.List) {
-
-					log.Lvl1("Client sending to node", i)
-					wg.Add(1)
-					go func(node *network.ServerIdentity) error {
-						ret := &byzcoin_ng.Reply{}
-						req := &byzcoin_ng.Request{tr}
-						cerr := byzcoin_ng.NewClient().SendProtobuf(node, req, ret)
-						log.ErrFatal(cerr)
-						err = ret.Sig.Verify(network.Suite, ret.Roster.Publics())
-						if err != nil {
-							log.Lvl1("cannot verify block")
-							return err
-						} else {
-							log.Lvl1("got answer from", node)
-						}
-						wg.Done()
-						return nil
-					}(node)
+			if s.Auditors > 0 {
+				if i >= s.Auditors {
+					if (i-s.Auditors)%s.Shard_length == 0 && i+s.Shard_length <= len(config.Roster.List) {
+						log.Lvl1("Client sending to node with audit", i)
+						wg.Add(1)
+						go func(node *network.ServerIdentity) error {
+							ret := &byzcoin_ng.Reply{}
+							req := &byzcoin_ng.Request{tr}
+							cerr := byzcoin_ng.NewClient().SendProtobuf(node, req, ret)
+							log.ErrFatal(cerr)
+							audit_slice[(i-s.Auditors)/s.Shard_length] = *ret
+							log.Lvl2("got answer placing at", (i-s.Auditors)/s.Shard_length)
+							wg.Done()
+							return nil
+						}(node)
+					}
 				}
+
+			} else if i%s.Shard_length == 1 && i+s.Shard_length <= len(config.Roster.List) {
+
+				log.Lvl1("No audit, Client sending to node", i)
+				wg.Add(1)
+				go func(node *network.ServerIdentity) error {
+					ret := &byzcoin_ng.Reply{}
+					req := &byzcoin_ng.Request{tr}
+					cerr := byzcoin_ng.NewClient().SendProtobuf(node, req, ret)
+					log.ErrFatal(cerr)
+					err = ret.Sig.Verify(network.Suite, ret.Roster.Publics())
+					if err != nil {
+						log.Lvl1("cannot verify block")
+						return err
+					} else {
+						log.Lvl1("got answer from", node)
+					}
+					wg.Done()
+					return nil
+				}(node)
 			}
 
 		}
 		wg.Wait()
+		if s.Auditors > 0 {
+			audit_struct := &byzcoin_ng.Audit{
+				HeaderHash: audit_slice[0].HeaderHash,
+				Replies:    audit_slice,
+				Roster:     s.audit_roster}
+			service.StartAuditSignature(audit_struct)
+			err = audit_struct.Sig.Verify(network.Suite, audit_struct.Roster.Publics())
+			if err != nil {
+				log.Lvl1("cannot verify block")
+				return err
+			}
+
+		}
 		if j > 0 {
 			cl.Record()
 		}
@@ -138,7 +186,7 @@ func (e *simulation) Run(config *onet.SimulationConfig) error {
 }
 
 func (s *simulation) run_service(sc *onet.SimulationConfig, roster *onet.Roster, l int) {
-	time.Sleep(90 * time.Second)
+	//time.Sleep(90 * time.Second)
 	service, ok := sc.GetService(byzcoin_ng.ServiceName).(*byzcoin_ng.Service)
 	if service == nil || !ok {
 		log.Fatal("Didn't find service", byzcoin_ng.ServiceName)

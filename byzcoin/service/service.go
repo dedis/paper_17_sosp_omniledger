@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dedis/paper_17_sosp_omniledger/bftcosi"
+	"github.com/dedis/paper_17_sosp_omniledger/bftcosi_special"
 	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
 	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain/blkparser"
 	"gopkg.in/dedis/cothority.v1/messaging"
@@ -24,12 +25,18 @@ import (
 // package.
 const ServiceName = "ByzcoinNG"
 const BNGBFT = "Byzcoin_NG_BFT"
+const BNGBFT2 = "Byzcoin_NG_BFT_AUDIT"
+
 const ReadFirstNBlocks = 66000
 
 func init() {
 	onet.RegisterNewService(ServiceName, newByzcoinNGService)
-	network.RegisterMessage(&bftcosi.MicroBlock{})
+	network.RegisterMessage(&bftcosi_special.MicroBlock{})
+	network.RegisterMessage(&Audit{})
 	onet.GlobalProtocolRegister(BNGBFT, func(n *onet.TreeNodeInstance) (onet.ProtocolInstance, error) {
+		return bftcosi_special.NewBFTCoSiProtocol(n, nil)
+	})
+	onet.GlobalProtocolRegister(BNGBFT2, func(n *onet.TreeNodeInstance) (onet.ProtocolInstance, error) {
 		return bftcosi.NewBFTCoSiProtocol(n, nil)
 	})
 }
@@ -45,8 +52,8 @@ type Service struct {
 	TRMutex   sync.Mutex
 	QMutex    sync.Mutex
 	QMutexver sync.RWMutex
-	PQueue    *bftcosi.PriorityQueue
-	PQueuever *bftcosi.PriorityQueue
+	PQueue    *bftcosi_special.PriorityQueue
+	PQueuever *bftcosi_special.PriorityQueue
 	HWMutex   sync.Mutex
 	Vempty    bool
 
@@ -54,8 +61,8 @@ type Service struct {
 	//TODO push this inside the blocks
 	Roster           *onet.Roster
 	done             chan bool
-	SerilizeChan     chan bftcosi.Item
-	block            *bftcosi.MicroBlock
+	SerilizeChan     chan bftcosi_special.Item
+	block            *bftcosi_special.MicroBlock
 	lastBlock        string
 	lastKeyBlock     string
 	currentpriority  int
@@ -91,7 +98,7 @@ func (s *Service) StartSimul(blocksPath string, nTxs int, Roster *onet.Roster) e
 	return nil
 }
 
-func (s *Service) StartEpoch(priority int, size int) (*bftcosi.MicroBlock, error) {
+func (s *Service) StartEpoch(priority int, size int) (*bftcosi_special.MicroBlock, error) {
 	//number of rounds... should be viariable
 	s.Barrier.Lock()
 	s.Barrier.Unlock()
@@ -126,7 +133,7 @@ func (s *Service) StartEpoch(priority int, size int) (*bftcosi.MicroBlock, error
 
 // signNewBlock should start a BFT-signature on the newest block
 //it is invoked by the leader of the epoch
-func (s *Service) signNewBlock(block *bftcosi.MicroBlock) (*bftcosi.MicroBlock, error) {
+func (s *Service) signNewBlock(block *bftcosi_special.MicroBlock) (*bftcosi_special.MicroBlock, error) {
 	log.Lvl4("Signing new block", block)
 	if block == nil {
 		log.Lvl3("Block is empty")
@@ -135,7 +142,7 @@ func (s *Service) signNewBlock(block *bftcosi.MicroBlock) (*bftcosi.MicroBlock, 
 		log.Lvl3("Got a block")
 
 		// Sign it
-		err := s.startBFTSignature(block)
+		err := s.StartBFTSignature(block)
 		if err != nil {
 			return nil, err
 		}
@@ -152,17 +159,17 @@ func (s *Service) signNewBlock(block *bftcosi.MicroBlock) (*bftcosi.MicroBlock, 
 	return nil, nil
 }
 
-func (s *Service) startBFTSignature(block *bftcosi.MicroBlock) error {
-	log.Lvl3("Starting bftsignature with root-node=", s.ServerIdentity())
+func (s *Service) StartAuditSignature(aud *Audit) error {
+	log.Lvl3("Starting audit with root-node=", s.ServerIdentity())
 	done := make(chan bool)
 	// create the message we want to sign for this round
-	msg := []byte(block.HeaderHash)
-	el := block.Roster
+	msg := []byte(aud.HeaderHash)
+	el := aud.Roster
 
 	// Start the protocol
-	tree := el.GenerateNaryTreeWithRoot(4, s.ServerIdentity())
+	tree := el.GenerateNaryTreeWithRoot(3, s.ServerIdentity())
 
-	node, err := s.CreateProtocol(BNGBFT, tree)
+	node, err := s.CreateProtocol(BNGBFT2, tree)
 	if err != nil {
 		return errors.New("Couldn't create new node: " + err.Error())
 	}
@@ -170,7 +177,59 @@ func (s *Service) startBFTSignature(block *bftcosi.MicroBlock) error {
 	// Register the function generating the protocol instance
 	root := node.(*bftcosi.ProtocolBFTCoSi)
 	root.Msg = msg
-	data, err := network.Marshal(block)
+	data, err := network.Marshal((aud))
+	log.Lvl1(err)
+
+	if err != nil {
+		return errors.New("Couldn't marshal data: " + err.Error())
+	}
+	root.Data = data
+	//root.ServiceChannel = s.SerilizeChan
+
+	// in testing-mode with more than one host and service per cothority-instance
+	// we might have the wrong verification-function, so set it again here.
+	root.VerificationFunction = s.auditVerify
+	// function that will be called when protocol is finished by the root
+	root.RegisterOnDone(func() {
+		done <- true
+	})
+
+	go node.Start()
+	select {
+	case <-done:
+		aud.Sig = root.Signature()
+		if len(aud.Sig.Exceptions) != 0 {
+			return errors.New("Not everybody signed off the new block")
+		}
+		if err := aud.Sig.Verify(network.Suite, el.Publics()); err != nil {
+			return errors.New("Couldn't verify signature")
+		}
+	case <-time.After(time.Second * 600):
+		return errors.New("Timed out while waiting for signature")
+	}
+	return nil
+
+}
+
+func (s *Service) StartBFTSignature(block *bftcosi_special.MicroBlock) error {
+	log.Lvl3("Starting bftsignature with root-node=", s.ServerIdentity())
+	done := make(chan bool)
+	// create the message we want to sign for this round
+	msg := []byte(block.HeaderHash)
+	el := block.Roster
+
+	// Start the protocol
+	tree := el.GenerateNaryTreeWithRoot(3, s.ServerIdentity())
+
+	node, err := s.CreateProtocol(BNGBFT, tree)
+	if err != nil {
+		return errors.New("Couldn't create new node: " + err.Error())
+	}
+
+	// Register the function generating the protocol instance
+	root := node.(*bftcosi_special.ProtocolBFTCoSi)
+	root.Msg = msg
+	data, err := network.Marshal((block))
 	if err != nil {
 		return errors.New("Couldn't marshal block: " + err.Error())
 	}
@@ -208,29 +267,52 @@ func (s *Service) NewProtocol(tn *onet.TreeNodeInstance, conf *onet.GenericConfi
 	var err error
 	switch tn.ProtocolName() {
 	case BNGBFT:
-		pi, err = bftcosi.NewBFTCoSiProtocol(tn, s.bftVerify)
-		pi.(*bftcosi.ProtocolBFTCoSi).ServiceChannel = s.SerilizeChan
+		pi, err = bftcosi_special.NewBFTCoSiProtocol(tn, s.bftVerify)
+		pi.(*bftcosi_special.ProtocolBFTCoSi).ServiceChannel = s.SerilizeChan
+
+	case BNGBFT2:
+		pi, err = bftcosi.NewBFTCoSiProtocol(tn, s.auditVerify)
 	}
 	return pi, err
 
 }
 
 // GetBlock returns the next block available from the transaction pool.
-func GetBlock(size int, transactions []blkparser.Tx, lastBlock string, lastKeyBlock string, priority int) (*bftcosi.MicroBlock, error) {
+func GetBlock(size int, transactions []blkparser.Tx, lastBlock string, lastKeyBlock string, priority int) (*bftcosi_special.MicroBlock, error) {
 	if len(transactions) < 1 {
 		return nil, errors.New("no transaction available")
 	}
 	trlist := blockchain.NewTransactionList(transactions, size)
 	header := blockchain.NewHeader(trlist, lastBlock, lastKeyBlock)
 	trblock := blockchain.NewTrBlock(trlist, header)
-	block := &bftcosi.MicroBlock{}
+	block := &bftcosi_special.MicroBlock{}
 	block.TrBlock = trblock
 	block.Priority = priority
 	return block, nil
 }
 
+func (s *Service) auditVerify(msg []byte, data []byte) bool {
+	log.Lvl1("auditverify")
+	_, sbN, err := network.Unmarshal(data)
+	if err != nil {
+		log.Error("Couldn't unmarshal Block", data)
+		return false
+	}
+	audit := sbN.(*Audit)
+
+	for _, r := range audit.Replies {
+		log.Lvl2("auditor")
+		err = r.Sig.Verify(network.Suite, r.Roster.Publics())
+		if err != nil {
+			log.Lvl1("cannot verify sig")
+			return false
+		}
+	}
+	return true
+
+}
+
 // VerifyBlock is a simulation of a real verification block algorithm
-//TODO change footprint to the bftcosi one
 func (s *Service) bftVerify(msg []byte, data []byte) bool {
 	//We measure the average block verification delays is 174ms for an average
 	//block of 500kB.
@@ -242,8 +324,9 @@ func (s *Service) bftVerify(msg []byte, data []byte) bool {
 		log.Error("Couldn't unmarshal Block", data)
 		return false
 	}
-	block := sbN.(*bftcosi.MicroBlock)
-	item := &bftcosi.Item{
+	block := sbN.(*bftcosi_special.MicroBlock)
+
+	item := &bftcosi_special.Item{
 		Priority:   block.Priority,
 		NotifyChan: make(chan bool),
 	}
@@ -266,7 +349,7 @@ func (s *Service) bftVerify(msg []byte, data []byte) bool {
 	// 		s.HWMutex.Lock()
 	// 		s.QMutexver.RUnlock()
 	// 		s.QMutexver.Lock()
-	// 		item = s.PQueuever.Pop().(*bftcosi.Item)
+	// 		item = s.PQueuever.Pop().(*bftcosi_special.Item)
 	// 		if block.Priority != item.Priority {
 	// 			heap.Push(s.PQueuever, item)
 	// 			s.QMutexver.Unlock()
@@ -281,7 +364,6 @@ func (s *Service) bftVerify(msg []byte, data []byte) bool {
 	// 	}
 
 	// }
-
 	b, _ := json.Marshal(block)
 	s1 := len(b)
 	var n time.Duration
@@ -291,7 +373,7 @@ func (s *Service) bftVerify(msg []byte, data []byte) bool {
 	//s.HWMutex.Unlock()
 	s.QMutexver.Lock()
 	if s.PQueuever.Len() != 0 {
-		item := s.PQueuever.Pop().(*bftcosi.Item)
+		item := s.PQueuever.Pop().(*bftcosi_special.Item)
 		item.NotifyChan <- true
 	} else {
 		s.Vempty = true
@@ -309,10 +391,11 @@ func (s *Service) bftVerify(msg []byte, data []byte) bool {
 		log.Lvl3("header", block.Header.Parent, "cached", s.lastBlock)
 	}
 	return verified
+
 }
 
 // notify other services about new/updated skipblock
-func (s *Service) startPropagation(block *bftcosi.MicroBlock) error {
+func (s *Service) startPropagation(block *bftcosi_special.MicroBlock) error {
 	log.Lvlf3("Starting to propagate for service %x", s.Context.ServerIdentity().ID[0:8])
 	roster := block.Roster
 	if roster == nil {
@@ -330,7 +413,7 @@ func (s *Service) startPropagation(block *bftcosi.MicroBlock) error {
 
 // PropagateSkipBlock will save a new SkipBlock
 func (s *Service) PropagateBZBlock(msg network.Message) {
-	sb, ok := msg.(*bftcosi.MicroBlock)
+	sb, ok := msg.(*bftcosi_special.MicroBlock)
 	if !ok {
 		log.Error("Couldn't convert to SkipBlock")
 		return
@@ -358,7 +441,7 @@ func (s *Service) Request(rq *Request) (network.Message, onet.ClientError) {
 	block := s.block
 	block.TransactionList = blockchain.TransactionList{}
 
-	return &Reply{Header: block.Header,
+	return &Reply{HeaderHash: block.HeaderHash,
 		Roster: block.Roster,
 		Sig:    block.BlockSig}, nil
 }
@@ -369,16 +452,16 @@ func (s *Service) Request(rq *Request) (network.Message, onet.ClientError) {
 func newByzcoinNGService(c *onet.Context) onet.Service {
 	s := &Service{
 		ServiceProcessor: onet.NewServiceProcessor(c),
-		block:            &bftcosi.MicroBlock{},
+		block:            &bftcosi_special.MicroBlock{},
 		lastBlock:        "0",
 		lastKeyBlock:     "0",
 		currentpriority:  0,
 		expectedpriority: 0,
 		Transaction:      &[]blkparser.Tx{},
 		Vempty:           true,
-		PQueue:           &bftcosi.PriorityQueue{},
-		PQueuever:        &bftcosi.PriorityQueue{},
-		SerilizeChan:     make(chan bftcosi.Item),
+		PQueue:           &bftcosi_special.PriorityQueue{},
+		PQueuever:        &bftcosi_special.PriorityQueue{},
+		SerilizeChan:     make(chan bftcosi_special.Item),
 		done:             make(chan bool),
 	}
 	s.RegisterHandler(s.Request)
@@ -403,7 +486,7 @@ func newByzcoinNGService(c *onet.Context) onet.Service {
 			} else {
 				s.QMutex.Lock()
 				if s.PQueue.Len() != 0 {
-					item := s.PQueue.Pop().(*bftcosi.Item)
+					item := s.PQueue.Pop().(*bftcosi_special.Item)
 					item.NotifyChan <- true
 				} else {
 					empty = true
@@ -421,7 +504,14 @@ type Request struct {
 }
 
 type Reply struct {
-	Header *blockchain.Header
-	Roster *onet.Roster
-	Sig    *bftcosi.BFTSignature
+	HeaderHash string
+	Roster     *onet.Roster
+	Sig        *bftcosi_special.BFTSignature
+}
+
+type Audit struct {
+	HeaderHash string
+	Replies    []Reply
+	Roster     *onet.Roster
+	Sig        *bftcosi.BFTSignature
 }
