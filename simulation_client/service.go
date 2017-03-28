@@ -137,7 +137,7 @@ func (s *simulation) Run(config *onet.SimulationConfig) error {
 							audit_lock.Lock()
 							audit_slice = append(audit_slice, *ret)
 							audit_lock.Unlock()
-							log.Lvl1("got answer placing at", j, (j-s.Auditors)/s.Shard_length, ret)
+							//log.Lvl1("got answer placing at", j, (j-s.Auditors)/s.Shard_length, ret)
 							wg.Done()
 							return nil
 						}(node, i)

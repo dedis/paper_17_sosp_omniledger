@@ -178,7 +178,7 @@ func (s *Service) StartAuditSignature(aud *Audit) error {
 	root := node.(*bftcosi.ProtocolBFTCoSi)
 	root.Msg = msg
 	data, err := network.Marshal((aud))
-	log.Lvl1(err)
+	//log.Lvl1(err)
 
 	if err != nil {
 		return errors.New("Couldn't marshal data: " + err.Error())
@@ -292,7 +292,7 @@ func GetBlock(size int, transactions []blkparser.Tx, lastBlock string, lastKeyBl
 }
 
 func (s *Service) auditVerify(msg []byte, data []byte) bool {
-	log.Lvl1("auditverify")
+	//log.Lvl1("auditverify")
 	_, sbN, err := network.Unmarshal(data)
 	if err != nil {
 		log.Error("Couldn't unmarshal Block", data)
@@ -301,7 +301,7 @@ func (s *Service) auditVerify(msg []byte, data []byte) bool {
 	audit := sbN.(*Audit)
 
 	for _, r := range audit.Replies {
-		log.Lvl1("auditor", r)
+		//log.Lvl1("auditor", r)
 		err = r.Sig.Verify(network.Suite, r.Roster.Publics())
 		if err != nil {
 			log.Lvl1("cannot verify sig")
