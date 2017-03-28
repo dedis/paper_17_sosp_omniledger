@@ -301,7 +301,7 @@ func (s *Service) auditVerify(msg []byte, data []byte) bool {
 	audit := sbN.(*Audit)
 
 	for _, r := range audit.Replies {
-		log.Lvl2("auditor")
+		log.Lvl1("auditor", r)
 		err = r.Sig.Verify(network.Suite, r.Roster.Publics())
 		if err != nil {
 			log.Lvl1("cannot verify sig")

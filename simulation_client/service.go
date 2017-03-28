@@ -69,21 +69,21 @@ func (s *simulation) Setup(dir string, hosts []string) (
 func (s *simulation) Node(sc *onet.SimulationConfig) error {
 	i, _ := sc.Roster.Search(sc.Server.ServerIdentity.ID)
 	if s.Auditors > 0 { //leader of auditors is 0
-		s.audit_roster = onet.NewRoster(sc.Roster.List[0:s.Auditors])
+		s.audit_roster = onet.NewRoster(sc.Roster.List[0 : s.Auditors-1])
 		s.Shard_length = (len(sc.Roster.List) - s.Auditors) / s.Shards
 		//Create Shards
-		log.Lvl1("i", i, "shard lenth", s.Shard_length, "full", len(sc.Roster.List))
+		//log.Lvl1("i", i, "shard lenth", s.Shard_length, "full", len(sc.Roster.List))
 		if i >= s.Auditors && (i-s.Auditors)%s.Shard_length == 0 && i+s.Shard_length <= len(sc.Roster.List) {
-			roster := onet.NewRoster(sc.Roster.List[i : i+s.Shard_length])
-			log.Lvl1("leader is:", i, "last is:", i+s.Shard_length)
+			roster := onet.NewRoster(sc.Roster.List[i : i+s.Shard_length-1])
+			log.Lvl1("leader is:", i, "last is:", i+s.Shard_length-1)
 			go s.run_service(sc, roster, i)
 
 		}
 	} else {
 		s.Shard_length = (len(sc.Roster.List) - 1) / s.Shards
 		if i%s.Shard_length == 1 && i+s.Shard_length <= len(sc.Roster.List) {
-			roster := onet.NewRoster(sc.Roster.List[i : i+s.Shard_length])
-			log.Lvl1("leader is:", i, "last is:", i+s.Shard_length)
+			roster := onet.NewRoster(sc.Roster.List[i : i+s.Shard_length-1])
+			log.Lvl1("leader is:", i, "last is:", i+s.Shard_length-1)
 			go s.run_service(sc, roster, i)
 		}
 
@@ -118,7 +118,9 @@ func (s *simulation) Run(config *onet.SimulationConfig) error {
 			cl = monitor.NewTimeMeasure("client")
 		}
 		var wg sync.WaitGroup
-		var audit_slice = make([]byzcoin_ng.Reply, (len(config.Roster.List)-s.Auditors)/s.Shard_length)
+		var audit_lock sync.Mutex
+		var audit_slice []byzcoin_ng.Reply
+		//var audit_slice = make([]byzcoin_ng.Reply, (len(config.Roster.List)-s.Auditors)/s.Shard_length)
 		//var audit_slice [(len(config.Roster.List) - s.Auditors) / s.Shard_length]byzcoin_ng.Reply
 		log.Lvl3("slice has", (len(config.Roster.List)-s.Auditors)/s.Shard_length, s.Auditors)
 		for i, node := range config.Roster.List {
@@ -127,16 +129,18 @@ func (s *simulation) Run(config *onet.SimulationConfig) error {
 					if (i-s.Auditors)%s.Shard_length == 0 && i+s.Shard_length <= len(config.Roster.List) {
 						log.Lvl1("Client sending to node with audit", i)
 						wg.Add(1)
-						go func(node *network.ServerIdentity) error {
+						go func(node *network.ServerIdentity, j int) error {
 							ret := &byzcoin_ng.Reply{}
 							req := &byzcoin_ng.Request{tr}
 							cerr := byzcoin_ng.NewClient().SendProtobuf(node, req, ret)
 							log.ErrFatal(cerr)
-							audit_slice[(i-s.Auditors)/s.Shard_length] = *ret
-							log.Lvl2("got answer placing at", (i-s.Auditors)/s.Shard_length)
+							audit_lock.Lock()
+							audit_slice = append(audit_slice, *ret)
+							audit_lock.Unlock()
+							log.Lvl1("got answer placing at", j, (j-s.Auditors)/s.Shard_length, ret)
 							wg.Done()
 							return nil
-						}(node)
+						}(node, i)
 					}
 				}
 
@@ -168,6 +172,7 @@ func (s *simulation) Run(config *onet.SimulationConfig) error {
 				HeaderHash: audit_slice[0].HeaderHash,
 				Replies:    audit_slice,
 				Roster:     s.audit_roster}
+			log.Lvl1(audit_slice)
 			service.StartAuditSignature(audit_struct)
 			err = audit_struct.Sig.Verify(network.Suite, audit_struct.Roster.Publics())
 			if err != nil {
