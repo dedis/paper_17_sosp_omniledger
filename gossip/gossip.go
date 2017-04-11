@@ -4,28 +4,38 @@ import (
 	"bytes"
 	"errors"
 	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/dedis/onet"
 	"github.com/dedis/onet/log"
+	"github.com/dedis/onet/network"
 )
+
+func init() {
+	onet.GlobalProtocolRegister("Gossip", NewGossipElection)
+	network.RegisterMessage(&Value{})
+	network.RegisterMessage(&ValueFound{})
+}
 
 var Msg = []byte("hellothisisthecustomstringthatiscompletelypubliclyavailable")
 
 // how much time do we sleep
-var Timeout time.Duration = 2 // in seconds
-// how much time do we run the "gossip" part
-var NbGossips = 5
+var Timeout = 2 * time.Second
 
 // to how much node do we send the "gossip"
 var NbNode = 5
 
 type GossipElection struct {
 	*onet.TreeNodeInstance
-	incomingValue chan Value
-	stop          chan bool
-	doneCb        func(v *Value)
-	value         *Value
+	stop       chan bool
+	doneCb     func(v *Value)
+	value      *Value
+	lowest     *Value
+	rootValues *valueCounter
+	firstTime  bool
+	list       *onet.Roster
+	sync.Mutex
 }
 
 type Value struct {
@@ -38,44 +48,38 @@ type ValueFound Value
 
 type ValueHeap []*Value
 
-func NewGossipElection(n *onet.TreeNodeInstance) *GossipElection {
+func NewGossipElection(n *onet.TreeNodeInstance) (onet.ProtocolInstance, error) {
+	threshold := n.Tree().Size() * 2.0 / 3.0
 	ge := &GossipElection{
 		TreeNodeInstance: n,
-		incomingValue:    make(chan Value),
 		stop:             make(chan bool),
+		rootValues:       newValueCounter(threshold),
+		firstTime:        true,
+		list:             n.Roster(),
 	}
-	ge.genValue()
+	ge.lowest = ge.genValue()
 	log.ErrFatal(ge.RegisterHandler(ge.ReceiveValue))
 	log.ErrFatal(ge.RegisterHandler(ge.ReceiveValueFound))
-	return ge
+	return ge, nil
+}
+
+func (p *GossipElection) Start() error {
+	err := p.SendToChildren(p.value)
+	log.Lvl2(p.Name(), "Root gossiped.. (", err, ")")
+	return err
 }
 
 func (p *GossipElection) Dispatch() error {
-	lowest := p.value
-	threshold := p.Tree().Size() * 2.0 / 3.0
-	rootValues := newValueCounter(threshold)
+	log.Lvl2(p.Name(), "Starting dispatch...")
 	for {
 		select {
-		case v := <-p.incomingValue:
-			if p.IsRoot() {
-				rootValues.Put(&v)
-				if rootValues.ThresholdReached() {
-					// found !
-					log.Lvl2(p.Name(), "Received ", rootValues.Max().Counter, "values ! Stopping!")
-					p.foundAll(rootValues.Max().Value)
-					return nil
-				}
-			}
-			if lowest.Less(&v) {
-				continue
-			}
-			log.Lvl3(p.Name(), "found lower value", string(v.Sum))
-			lowest = &v
 		case <-time.After(time.Second * Timeout):
 			log.Lvl4(p.Name(), "timeout occured => gossiping")
-			p.gossip(lowest)
+			p.gossip()
 			if p.IsRoot() {
-				rootValues.Reset()
+				p.Lock()
+				p.rootValues.Reset()
+				p.Unlock()
 			}
 		case <-p.stop:
 			log.Lvl3(p.Name(), "stopping...")
@@ -84,16 +88,43 @@ func (p *GossipElection) Dispatch() error {
 	}
 }
 
-func (p *GossipElection) ReceiveValue(n *onet.TreeNode, val *Value) error {
-	if !Verify(p.Suite(), n.ServerIdentity.Public, Msg, val.Sum, val.Proof) {
+func (p *GossipElection) ReceiveValue(v ValueHandler) error {
+	val := &v.Value
+	n := v.TreeNode
+	public := p.list.Get(int(val.Index)).Public
+	if !Verify(p.Suite(), public, Msg, val.Sum, val.Proof) {
 		log.Error(p.Name(), "received invalid proof from", n.Name())
 		return errors.New("invalid proof")
 	}
-	p.incomingValue <- *val
+	p.Lock()
+	defer p.Unlock()
+
+	if val.Less(p.lowest) {
+		log.Lvl3(p.Name(), "found lower value", string(val.Sum))
+		p.lowest = val
+	}
+
+	if p.firstTime {
+		// first time, so directly gossip
+		p.Unlock()
+		p.gossip()
+		p.Lock()
+	}
+
+	if p.IsRoot() {
+		p.rootValues.Put(val)
+		if p.rootValues.ThresholdReached() {
+			// found !
+			log.Lvl2(p.Name(), "Received ", p.rootValues.Max().Counter, "values ! Stopping!")
+			p.foundAll(p.rootValues.Max().Value)
+			return nil
+		}
+	}
 	return nil
 }
 
-func (p *GossipElection) ReceiveValueFound(n *onet.TreeNode, val *ValueFound) error {
+func (p *GossipElection) ReceiveValueFound(v ValueFoundHandler) error {
+	val := &v.ValueFound
 	log.Lvl2(p.Name(), "received found value from root ! Stopping..")
 	if err := p.SendToChildren(val); err != nil {
 		log.Error(err)
@@ -108,21 +139,23 @@ func (p *GossipElection) foundAll(common *Value) {
 		p.doneCb(common)
 	}
 	vf := ValueFound(*common)
-	p.ReceiveValueFound(p.TreeNode(), &vf)
+	p.ReceiveValueFound(ValueFoundHandler{p.TreeNode(), vf})
 }
 
 func (p *GossipElection) RegisterDoneCb(fn func(v *Value)) {
 	p.doneCb = fn
 }
 
-func (p *GossipElection) gossip(lowest *Value) {
+func (p *GossipElection) gossip() {
+	p.Lock()
+	defer p.Unlock()
 	// send to root
-	p.SendTo(p.Root(), lowest)
+	p.SendTo(p.Root(), p.lowest)
 	// choose random nodes
 	list := p.List()
 	for i := 0; i < NbNode; i++ {
 		n := rand.Intn(len(list))
-		if err := p.SendTo(list[n], lowest); err != nil {
+		if err := p.SendTo(list[n], p.lowest); err != nil {
 			log.Error(p.Name(), "err gossiping to", list[n].Name())
 		}
 	}
@@ -218,4 +251,14 @@ func (v *valueCounter) Put(val *Value) {
 func (v *valueCounter) Reset() {
 	v.m = make(map[string]valueInfo)
 	v.max = valueInfo{}
+}
+
+type ValueHandler struct {
+	*onet.TreeNode
+	Value
+}
+
+type ValueFoundHandler struct {
+	*onet.TreeNode
+	ValueFound
 }
