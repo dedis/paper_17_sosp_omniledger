@@ -1,0 +1,14 @@
+Servers = 32
+Simulation = "Gossip"
+BF = 2
+Rounds = 1
+NbNodeGossip = 5
+Timeout = 2000
+
+Hosts
+70
+140
+280
+560
+1200
+1800
