@@ -5,11 +5,11 @@ BF = 2
 BlocksPerDay = 144
 FileBlock = "blocks-size.csv"
 FileUnspent = "utxo-count.csv"
-Scaling = 10000
+Scaling = 100
 Bandwidth = 1000
 IndividualStats = "true"
 RunWait = 86400
 
 SimulationDays, StateBlockFreq, timeStart, timeEnd, timeStep
-50, 1, 1, 50, 1
-50, 7, 1, 50, 1
+365, 1, 1, 365, 1
+365, 7, 1, 365, 1
