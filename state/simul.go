@@ -87,16 +87,6 @@ func (s *SimulationProtocol) Run(config *onet.SimulationConfig) error {
 	state, err := readCSV(s.FileUnspent, s.BlocksPerDay, 37, false)
 	log.ErrFatal(err)
 	initSkip := monitor.NewTimeMeasure("init_skip")
-	start := trans.first
-	if start < state.first {
-		start = state.first
-	}
-	start *= s.BlocksPerDay
-	stop := len(trans.values)
-	if stop > len(state.values) {
-		stop = len(state.values)
-	}
-	stop = (stop - 1) * s.BlocksPerDay
 	sbClient := skipchain.NewClient()
 
 	// Setting up the transaction-skipchain
@@ -117,7 +107,16 @@ func (s *SimulationProtocol) Run(config *onet.SimulationConfig) error {
 	log.ErrFatal(cerr)
 	replyStateConfig := &skipchain.StoreSkipBlockReply{nil, sbStateConfig}
 
-	last := time.Now()
+	start := trans.first
+	if start < state.first {
+		start = state.first
+	}
+	start *= s.BlocksPerDay
+	stop := len(trans.values)
+	if stop > len(state.values) {
+		stop = len(state.values)
+	}
+	stop = (stop - 1) * s.BlocksPerDay
 	simulationStart := stop - s.SimulationDays*s.BlocksPerDay
 	if simulationStart < start {
 		simulationStart = start
@@ -127,6 +126,7 @@ func (s *SimulationProtocol) Run(config *onet.SimulationConfig) error {
 	startStateSize := int64(0)
 	var obTransList []*OmniBlockTrans
 	//startStateSize := state.GetValue(simulationStart)
+	last := time.Now()
 	for count := simulationStart; count < stop; count++ {
 		nowTransSize := trans.GetValue(count)
 		sbTime := float32(count-simulationStart) / float32(s.BlocksPerDay)
@@ -154,14 +154,13 @@ func (s *SimulationProtocol) Run(config *onet.SimulationConfig) error {
 			t := time.Now()
 			replyState, cerr = sbClient.StoreSkipBlock(replyState.Latest, nil, obs)
 			log.ErrFatal(cerr)
-			log.LLvlf2("Added state-block with size: %dkB in %s",
-				size*s.Scaling/1e3, time.Now().Sub(t))
+			log.LLvlf2("Added state-block with size: %dkB in %s at %f",
+				size*s.Scaling/1e3, time.Now().Sub(t), sbTime)
 			obsc := &OmniBlockStateConfig{
 				SBState:       replyState.Latest.Hash,
 				SBTransaction: replyTrans.Latest.Hash,
 				Time:          sbTime,
 			}
-			// log.Printf("State %x", obsc.SBTransaction)
 			replyStateConfig, cerr = sbClient.StoreSkipBlock(replyStateConfig.Latest, nil, obsc)
 			log.ErrFatal(cerr)
 			lastTransWithState = nowTransSize
@@ -174,16 +173,15 @@ func (s *SimulationProtocol) Run(config *onet.SimulationConfig) error {
 		lastTransSize = nowTransSize
 		obt := &OmniBlockTrans{
 			SBStateConfig: replyStateConfig.Latest.Hash,
-			Trans:         make([]byte, transSize),
+			SBTrans:       make([]byte, transSize),
 			Time:          sbTime,
 		}
 		replyTrans, cerr = sbClient.StoreSkipBlock(replyTrans.Latest, nil, obt)
 		log.ErrFatal(cerr)
 		obTransList = append(obTransList, &OmniBlockTrans{
-			SBMe:          replyTrans.Latest.Hash,
 			SBStateConfig: replyStateConfig.Latest.Hash,
 			SBState:       replyState.Latest.Hash,
-			Trans:         replyTrans.Latest.Hash,
+			SBTrans:       replyTrans.Latest.Hash,
 			Time:          sbTime,
 		})
 		now := time.Now()
@@ -195,7 +193,6 @@ func (s *SimulationProtocol) Run(config *onet.SimulationConfig) error {
 		last = now
 	}
 
-	stopTime := float32(stop-simulationStart) / float32(s.BlocksPerDay)
 	//stConfList, cerr := sbClient.GetUpdateChain(config.Roster, sbStateConfig.Hash)
 	log.ErrFatal(err)
 	initSkip.Record()
@@ -204,27 +201,32 @@ func (s *SimulationProtocol) Run(config *onet.SimulationConfig) error {
 		monitor.RecordSingleMeasure("back_day", float64(backDay))
 		log.Lvl1("Measuring time", backDay)
 		log.Lvl2("Getting latest state and transactions", backDay, "days back")
-		var startTrans *OmniBlockTrans
-		for _, startTrans = range obTransList {
-			if startTrans.Time > stopTime-float32(backDay) {
-				break
-			}
-		}
-		_, cerr = sbClient.GetUpdateChain(config.Roster, startTrans.SBMe)
+		startTrans := obTransList[0]
+		startBlock, cerr := sbClient.GetSingleBlock(config.Roster, startTrans.SBTrans)
+		stateBlock, cerr := sbClient.GetSingleBlock(config.Roster,
+			startTrans.SBStateConfig)
 		log.ErrFatal(cerr)
-		startStateConfig, cerr := sbClient.GetSingleBlock(config.Roster, startTrans.SBStateConfig)
-		log.ErrFatal(cerr)
-		// log.Printf("Time: %f", startTrans.Time)
-		// log.Printf("startTrans.stateConfig: %x", startTrans.SBStateConfig)
-		// log.Printf("startTrans.state: %x", startTrans.SBState)
-		// log.Printf("stateConfig: %x", startStateConfig.Hash)
 
 		// Start with the bitcoin-method of taking all blocks
 		time_bc := monitor.NewTimeMeasure("time_bitcoin")
 		bw_bc := monitor.NewCounterIOMeasure("bw_bitcoin", sbClient)
-		allBlocks, cerr := sbClient.GetUpdateChain(config.Roster, startTrans.SBMe)
+
+		bitcoinBlock := startBlock
+		bitcoinBlockCount := 1
+		for {
+			_, obtInt, err := network.Unmarshal(bitcoinBlock.Data)
+			log.ErrFatal(err)
+			obt := obtInt.(*OmniBlockTrans)
+			if obt.Time > float32(backDay) {
+				break
+			}
+			bitcoinBlock, cerr = sbClient.GetSingleBlock(config.Roster,
+				bitcoinBlock.ForwardLink[0].Hash)
+			log.ErrFatal(cerr)
+			bitcoinBlockCount++
+		}
 		monitor.RecordSingleMeasure("transblocks_bitcoin",
-			float64(len(allBlocks.Update)))
+			float64(bitcoinBlockCount))
 		bw_bc.Record()
 		time_bc.Record()
 
@@ -232,40 +234,35 @@ func (s *SimulationProtocol) Run(config *onet.SimulationConfig) error {
 		time_ol := monitor.NewTimeMeasure("time_omniledger")
 		bw_ol := monitor.NewCounterIOMeasure("bw_omniledger", sbClient)
 
-		// Get latest state config
-		latestSC, cerr := sbClient.GetUpdateChain(config.Roster, startStateConfig.Hash)
-		_, lsIntSC, err := network.Unmarshal(latestSC.Update[len(latestSC.Update)-1].Data)
+		omniBlock := startBlock
+		omniBlockCount := 1
 		log.ErrFatal(err)
-		latestStateConfig := lsIntSC.(*OmniBlockStateConfig)
-
-		// log.Printf("latestStateConfig: %x", latestStateConfig.SBState)
-		if startTrans.SBState.Equal(latestStateConfig.SBState) {
-			// log.Print("have this state already")
-			trans, cerr := sbClient.GetUpdateChain(config.Roster, startTrans.Trans)
-			//for _, t := range trans.Update {
-			//log.Printf("%+x", t.Hash)
-			//}
-			log.ErrFatal(cerr)
-			monitor.RecordSingleMeasure("transblocks_omniledger",
-				float64(len(trans.Update)))
-		} else {
-			// And latest state
-			latestS, cerr := sbClient.GetSingleBlock(config.Roster, latestStateConfig.SBState)
-			_, lsIntS, err := network.Unmarshal(latestS.Data)
+		nextStateBlock, cerr := sbClient.GetSingleBlock(config.Roster,
+			stateBlock.ForwardLink[0].Hash)
+		_, nsb, err := network.Unmarshal(nextStateBlock.Data)
+		log.ErrFatal(err)
+		nextStateBlockTime := nsb.(*OmniBlockStateConfig).Time
+		for {
+			_, obtInt, err := network.Unmarshal(omniBlock.Data)
 			log.ErrFatal(err)
-			latestState := lsIntS.(*OmniBlockState)
-
-			// Get update-chain of transactions - as this is a 1,1-skipchain, we'll
-			// get _all_ blocks from the latestState to now.
-			// log.Printf("latestState.transaction: %x", latestState.SBTransaction)
-			trans, cerr := sbClient.GetUpdateChain(config.Roster, latestState.SBTransaction)
-			//for _, t := range trans.Update {
-			//log.Printf("%+x", t.Hash)
-			//}
+			obt := obtInt.(*OmniBlockTrans)
+			if obt.Time > float32(backDay) {
+				break
+			}
+			if obt.Time > nextStateBlockTime {
+				_, cerr := sbClient.GetSingleBlock(config.Roster,
+					obTransList[1].SBState)
+				log.ErrFatal(cerr)
+				break
+			}
+			omniBlock, cerr = sbClient.GetSingleBlock(config.Roster,
+				omniBlock.ForwardLink[0].Hash)
 			log.ErrFatal(cerr)
-			monitor.RecordSingleMeasure("transblocks_omniledger",
-				float64(len(trans.Update)))
+			omniBlockCount++
 		}
+		monitor.RecordSingleMeasure("transblocks_omniledger",
+			float64(omniBlockCount))
+
 		bw_ol.Record()
 		time_ol.Record()
 	}
@@ -285,10 +282,9 @@ type OmniBlockStateConfig struct {
 }
 
 type OmniBlockTrans struct {
-	SBMe          skipchain.SkipBlockID
 	SBStateConfig skipchain.SkipBlockID
 	SBState       skipchain.SkipBlockID
-	Trans         []byte
+	SBTrans       skipchain.SkipBlockID
 	Time          float32
 }
 
