@@ -1,0 +1,16 @@
+Servers = 32
+Simulation = "ByzCoinNtree"
+NumClientTxs = 350000
+RunWait = 3000
+CloseWait = 3000
+Hosts= 60
+
+Depth, Blocksize, Threads, Rounds
+5, 100, 4, 12
+5, 33000, 2, 14
+5, 17000, 4, 20
+5, 9000, 8, 30
+5, 2200, 1, 8
+5, 1000, 2, 14
+5, 500, 4, 20
+5, 250, 8, 30

@@ -1,9 +1,8 @@
-package pbft
+package main
 
 import (
 	"github.com/BurntSushi/toml"
-	"github.com/dedis/archives/protocols/manage"
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol/blockchain"
 	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
 	"gopkg.in/dedis/onet.v1/simul/monitor"
@@ -76,26 +75,26 @@ func (e *Simulation) Run(sdaConf *onet.SimulationConfig) error {
 	trblock := blockchain.NewTrBlock(trlist, header)
 
 	// Here we first setup the N^2 connections with a broadcast protocol
-	pi, err := sdaConf.Overlay.CreateProtocol("Broadcast", sdaConf.Tree)
-	if err != nil {
-		log.Error(err)
-	}
-	proto := pi.(*manage.Broadcast)
-	// channel to notify we are done
-	broadDone := make(chan bool)
-	proto.RegisterOnDone(func() {
-		broadDone <- true
-	})
-
-	// ignore error on purpose: Start always returns nil
-	_ = proto.Start()
-
-	// wait
-	<-broadDone
+	//pi, err := sdaConf.Overlay.CreateProtocol("Broadcast", sdaConf.Tree)
+	//if err != nil {
+	//	log.Error(err)
+	//}
+	//proto := pi.(*manage.Broadcast)
+	//// channel to notify we are done
+	//broadDone := make(chan bool)
+	//proto.RegisterOnDone(func() {
+	//	broadDone <- true
+	//})
+	//
+	//// ignore error on purpose: Start always returns nil
+	//_ = proto.Start()
+	//
+	//// wait
+	//<-broadDone
 	log.Lvl3("Simulation can start!")
 	for round := 0; round < e.Rounds; round++ {
 		log.Lvl1("Starting round", round)
-		p, err := sdaConf.Overlay.CreateProtocol("ByzCoinPBFT", sdaConf.Tree)
+		p, err := sdaConf.Overlay.CreateProtocol("ByzCoinPBFT", sdaConf.Tree, onet.NilServiceID)
 		if err != nil {
 			return err
 		}

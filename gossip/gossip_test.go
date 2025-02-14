@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dedis/onet"
-	"github.com/dedis/onet/log"
+	"gopkg.in/dedis/onet.v1"
+	"gopkg.in/dedis/onet.v1/log"
 	"github.com/stretchr/testify/require"
 )
 

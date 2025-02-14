@@ -1,7 +1,7 @@
-package pbft
+package main
 
 import (
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol/blockchain"
 	"gopkg.in/dedis/onet.v1"
 )
 
