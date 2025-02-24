@@ -1,12 +1,12 @@
-package byzcoinNtree
+package main
 
 import (
 	"encoding/json"
 	"math"
 
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol"
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain/blkparser"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol/blockchain/blkparser"
 	"github.com/dedis/paper_17_sosp_omniledger/crypto"
 	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"

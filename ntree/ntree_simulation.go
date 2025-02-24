@@ -1,9 +1,9 @@
-package byzcoinNtree
+package main
 
 import (
 	"github.com/BurntSushi/toml"
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol"
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol/blockchain"
 	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
 	"gopkg.in/dedis/onet.v1/simul/monitor"

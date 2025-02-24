@@ -1,5 +1,5 @@
 // Package pbft is the Practical Byzantine Fault Tolerance algorithm with some simplifications.
-package pbft
+package main
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol/blockchain"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol/blockchain"
 	"gopkg.in/dedis/crypto.v0/abstract"
 	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"

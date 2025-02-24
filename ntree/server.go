@@ -1,7 +1,7 @@
-package byzcoinNtree
+package main
 
 import (
-	"github.com/dedis/paper_17_sosp_omniledger/byzcoin/protocol"
+	"github.com/dedis/paper_17_sosp_omniledger/byzcoin_lib/protocol"
 	"gopkg.in/dedis/onet.v1"
 	"gopkg.in/dedis/onet.v1/log"
 )

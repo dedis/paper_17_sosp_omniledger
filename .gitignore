@@ -2,7 +2,6 @@
 *.o
 *.a
 *.so
-*.dat
 
 # Folders
 _obj
@@ -24,3 +23,14 @@ _testmain.go
 *.test
 *.prof
 *.iml
+
+# onet simulation files
+build/
+test_data/
+**/simulation/simulation
+byzcoin_ng/byzcoin_ng
+byzcoin_ng2/byzcoin_ng2
+ntree/ntree
+pbft/pbft
+omniledger/omniledger
+
